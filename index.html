@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Particle Universe - Gesture Controlled 3D Particles</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1632432234/camera_utils.js" crossorigin="anonymous"></script>
   <style>
     * {
       margin: 0;
@@ -526,8 +529,7 @@
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script type="module">
+  <script>
     // Particle Templates
     const PARTICLE_TEMPLATES = {
       heart: {
@@ -686,12 +688,12 @@
     const ctx = canvas.getContext('2d');
     const cameraBtn = document.getElementById('camera-btn');
     const cameraPreview = document.getElementById('camera-preview');
-    const handStatus = document.getElementById('hand-status');
-    const scaleValue = document.getElementById('scale-value');
+    const handStatusEl = document.getElementById('hand-status');
+    const scaleValueEl = document.getElementById('scale-value');
     const scaleBarFill = document.getElementById('scale-bar-fill');
     const colorPicker = document.getElementById('color-picker');
     const densitySlider = document.getElementById('density-slider');
-    const densityValue = document.getElementById('density-value');
+    const densityValueEl = document.getElementById('density-value');
 
     // Initialize Three.js
     function initThreeJS() {
@@ -798,7 +800,7 @@
       currentScale += (targetScale - currentScale) * 0.08;
       particles.material.uniforms.uScale.value = currentScale;
 
-      scaleValue.textContent = currentScale.toFixed(2) + '×';
+      scaleValueEl.textContent = currentScale.toFixed(2) + '×';
       scaleBarFill.style.width = Math.min(100, (currentScale / 3) * 100) + '%';
 
       rotation.y += 0.002;
@@ -842,10 +844,8 @@
         video.srcObject = stream;
         await video.play();
 
-        const { Hands } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js');
-        const { Camera } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1632432234/camera_utils.js');
-
-        handsInstance = new Hands({
+        // Use global Hands from MediaPipe script loaded in head
+        handsInstance = new window.Hands({
           locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`
         });
 
@@ -907,22 +907,22 @@
               );
               const scale = Math.max(0.3, Math.min(3, distance * 4));
               targetScale = scale;
-              handStatus.textContent = `Both hands: Scale ${scale.toFixed(2)}x`;
-              handStatus.classList.add('tracking');
+              handStatusEl.textContent = `Both hands: Scale ${scale.toFixed(2)}x`;
+              handStatusEl.classList.add('tracking');
             } else {
               const openness = calculateHandOpenness(results.multiHandLandmarks[0]);
               const scale = Math.max(0.5, Math.min(2.5, openness * 8));
               targetScale = scale;
-              handStatus.textContent = `One hand: Scale ${scale.toFixed(2)}x`;
-              handStatus.classList.add('tracking');
+              handStatusEl.textContent = `One hand: Scale ${scale.toFixed(2)}x`;
+              handStatusEl.classList.add('tracking');
             }
           } else {
-            handStatus.textContent = 'No hands detected';
-            handStatus.classList.remove('tracking');
+            handStatusEl.textContent = 'No hands detected';
+            handStatusEl.classList.remove('tracking');
           }
         });
 
-        cameraInstance = new Camera(video, {
+        cameraInstance = new window.Camera(video, {
           onFrame: async () => {
             await handsInstance.send({ image: video });
           },
@@ -942,7 +942,7 @@
 
       } catch (error) {
         console.error('Error initializing hand tracking:', error);
-        handStatus.textContent = 'Camera access denied';
+        handStatusEl.textContent = 'Error: ' + error.message;
         cameraBtn.classList.remove('loading');
         cameraBtn.querySelector('span').textContent = 'Start Camera';
       }
@@ -963,7 +963,7 @@
       cameraBtn.querySelector('.camera-indicator').classList.add('inactive');
       cameraBtn.querySelector('span').textContent = 'Start Camera';
       cameraPreview.classList.remove('visible');
-      handStatus.textContent = 'Camera stopped';
+      handStatusEl.textContent = 'Camera stopped';
       targetScale = 1;
     }
 
@@ -1007,7 +1007,7 @@
 
     densitySlider.addEventListener('input', (e) => {
       particleCount = parseInt(e.target.value);
-      densityValue.textContent = particleCount.toLocaleString();
+      densityValueEl.textContent = particleCount.toLocaleString();
       createParticles();
     });
 
