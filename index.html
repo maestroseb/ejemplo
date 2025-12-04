@@ -315,6 +315,17 @@
       50% { opacity: 0.5; }
     }
 
+    input[type="range"]::-webkit-slider-thumb {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #ffffff;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    }
+
     /* Particle trail effect */
     .particle-trail {
       position: fixed;
@@ -355,6 +366,15 @@
         <p id="hand-status">Buscando manos...</p>
       </div>
     </div>
+  </div>
+
+  <!-- Density Panel -->
+  <div class="panel density-panel" style="position: absolute; top: 24px; left: 24px; z-index: 10; padding: 16px; min-width: 200px;">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+      <span class="stat-label">Densidad</span>
+      <span class="stat-value" id="density-value">5,000</span>
+    </div>
+    <input type="range" id="density-slider" min="1000" max="15000" step="1000" value="5000" style="width: 100%; height: 4px; border-radius: 2px; appearance: none; -webkit-appearance: none; background: rgba(255,255,255,0.1); cursor: pointer;">
   </div>
 
   <!-- Instructions -->
@@ -435,20 +455,21 @@
         
         positions.push(x, y, z);
         
-        // Color gradient from center (warm) to edges (cool)
-        const t = radius / 4;
+        // More vibrant color gradient - pink/magenta center to cyan/blue edges
+        const t = Math.min(radius / 3, 1);
         colors.push(
-          1.0 - t * 0.5,      // R
-          0.6 + t * 0.3,      // G  
-          0.8 + t * 0.2       // B
+          1.0 - t * 0.3,           // R: high throughout
+          0.4 + t * 0.6,           // G: increases outward
+          0.7 + t * 0.3            // B: high throughout
         );
       }
       
-      // Add central bright core
-      for (let i = 0; i < count * 0.1; i++) {
+      // Add central bright core - more particles
+      const coreCount = Math.floor(count * 0.15);
+      for (let i = 0; i < coreCount; i++) {
         const phi = Math.acos(2 * Math.random() - 1);
         const theta = Math.random() * Math.PI * 2;
-        const r = Math.random() * 0.4;
+        const r = Math.random() * 0.5;
         
         positions.push(
           r * Math.sin(phi) * Math.cos(theta),
@@ -456,7 +477,8 @@
           r * Math.cos(phi)
         );
         
-        colors.push(1.0, 0.9, 0.8);
+        // Bright white/pink core
+        colors.push(1.0, 0.85, 0.95);
       }
       
       return { positions, colors };
@@ -507,6 +529,8 @@
     const statZ = document.getElementById('stat-z');
     const statRot = document.getElementById('stat-rot');
     const statScale = document.getElementById('stat-scale');
+    const densitySlider = document.getElementById('density-slider');
+    const densityValueEl = document.getElementById('density-value');
 
     // Initialize Three.js
     function initThreeJS() {
@@ -568,11 +592,11 @@
 
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setAttribute('customColor', new THREE.Float32BufferAttribute(colors, 3));
 
       const sizes = new Float32Array(totalCount);
       for (let i = 0; i < totalCount; i++) {
-        sizes[i] = Math.random() * 0.5 + 0.3;
+        sizes[i] = Math.random() * 0.8 + 0.4;
       }
       geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
@@ -583,22 +607,22 @@
         },
         vertexShader: `
           attribute float size;
-          attribute vec3 color;
+          attribute vec3 customColor;
           varying vec3 vColor;
           varying float vAlpha;
           uniform float uTime;
           uniform float uScale;
           
           void main() {
-            vColor = color;
-            vAlpha = 0.7 + sin(uTime * 2.0 + position.x * 5.0) * 0.3;
+            vColor = customColor;
+            vAlpha = 0.8 + sin(uTime * 2.0 + position.x * 5.0) * 0.2;
             
             vec3 pos = position * uScale;
-            pos.x += sin(uTime + position.z * 2.0) * 0.02;
-            pos.y += cos(uTime + position.x * 2.0) * 0.02;
+            pos.x += sin(uTime + position.z * 2.0) * 0.03;
+            pos.y += cos(uTime + position.x * 2.0) * 0.03;
             
             vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-            gl_PointSize = size * (250.0 / -mvPosition.z) * uScale;
+            gl_PointSize = size * (350.0 / -mvPosition.z) * uScale;
             gl_Position = projectionMatrix * mvPosition;
           }
         `,
@@ -611,16 +635,15 @@
             if (dist > 0.5) discard;
             
             float glow = 1.0 - smoothstep(0.0, 0.5, dist);
-            glow = pow(glow, 1.5);
+            glow = pow(glow, 1.2);
             
-            vec3 finalColor = vColor * (1.0 + glow * 0.5);
+            vec3 finalColor = vColor * (1.2 + glow * 0.8);
             gl_FragColor = vec4(finalColor, glow * vAlpha);
           }
         `,
         transparent: true,
         blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        vertexColors: true
+        depthWrite: false
       });
 
       particles = new THREE.Points(geometry, material);
@@ -1012,6 +1035,12 @@
     cameraBtn.addEventListener('click', () => {
       if (cameraActive) stopHandTracking();
       else initHandTracking();
+    });
+
+    densitySlider.addEventListener('input', (e) => {
+      particleCount = parseInt(e.target.value);
+      densityValueEl.textContent = particleCount.toLocaleString();
+      createParticles();
     });
 
     // Initialize
