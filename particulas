@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kinetic Particles (Local AI)</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body { margin: 0; overflow: hidden; background: #050505; color: white; }
+    canvas { width: 100vw; height: 100vh; display: block; }
+    .loader { border: 4px solid #f3f3f3; border-top: 4px solid #06b6d4; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "three": "https://esm.sh/three@0.160.0",
+      "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.14?external=react,react-dom,three",
+      "@react-three/drei": "https://esm.sh/@react-three/drei@9.96.1?external=react,react-dom,three,@react-three/fiber",
+      "@mediapipe/tasks-vision": "https://esm.sh/@mediapipe/tasks-vision@0.10.8"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react,typescript">
+    import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Canvas, useFrame } from '@react-three/fiber';
+    import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
+    import * as THREE from 'three';
+    import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
+
+    // ----------------------------------------------------------------------
+    // 1. CONSTANTS & TYPES
+    // ----------------------------------------------------------------------
+    enum ShapeType {
+      HEART = 'Heart',
+      FLOWER = 'Flower',
+      SATURN = 'Saturn',
+      MEDITATING = 'Meditating',
+      FIREWORKS = 'Fireworks',
+      SPHERE = 'Sphere'
+    }
+
+    // ----------------------------------------------------------------------
+    // 2. LOGIC FOR LOCAL AI (MediaPipe)
+    // ----------------------------------------------------------------------
+    
+    // Calculates how "open" the hand is based on distance of fingertips to wrist
+    const calculateOpenness = (landmarks) => {
+        const wrist = landmarks[0];
+        const tips = [4, 8, 12, 16, 20]; // Thumb, Index, Middle, Ring, Pinky tips
+        let totalDist = 0;
+        
+        tips.forEach(idx => {
+            const tip = landmarks[idx];
+            const dist = Math.sqrt(
+                Math.pow(tip.x - wrist.x, 2) + 
+                Math.pow(tip.y - wrist.y, 2)
+            );
+            totalDist += dist;
+        });
+
+        const avgDist = totalDist / 5;
+        // Normalize: 0.15 is roughly a fist, 0.35+ is open hand usually
+        const openness = (avgDist - 0.1) / (0.35 - 0.1); 
+        return Math.max(0, Math.min(1, openness));
+    };
+
+    // ----------------------------------------------------------------------
+    // 3. COMPONENTS
+    // ----------------------------------------------------------------------
+
+    // --- Particle System (Same as before) ---
+    const COUNT = 4000;
+    const DUMMY = new THREE.Object3D();
+
+    const getPosition = (i, shape) => {
+      const p = new THREE.Vector3();
+      const ratio = i / COUNT;
+      
+      switch (shape) {
+        case ShapeType.SPHERE: {
+          const theta = Math.acos(THREE.MathUtils.randFloatSpread(2));
+          const phi = THREE.MathUtils.randFloatSpread(360);
+          p.x = 10 * Math.sin(theta) * Math.cos(phi);
+          p.y = 10 * Math.sin(theta) * Math.sin(phi);
+          p.z = 10 * Math.cos(theta);
+          break;
+        }
+        case ShapeType.HEART: {
+          const t = ratio * Math.PI * 2 * 10;
+          const x = 16 * Math.pow(Math.sin(t), 3);
+          const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+          const z = (Math.random() - 0.5) * 5;
+          p.set(x * 0.5, y * 0.5, z);
+          break;
+        }
+        case ShapeType.FLOWER: {
+          const k = 4; 
+          const theta = ratio * Math.PI * 2 * 20;
+          const r = Math.cos(k * theta) * 10;
+          p.x = r * Math.cos(theta);
+          p.y = r * Math.sin(theta);
+          p.z = (Math.random() - 0.5) * (10 - r);
+          break;
+        }
+        case ShapeType.SATURN: {
+          if (i < COUNT * 0.3) {
+            const theta = Math.acos(THREE.MathUtils.randFloatSpread(2));
+            const phi = THREE.MathUtils.randFloatSpread(360);
+            p.setFromSphericalCoords(4, theta, phi);
+          } else {
+            const angle = ratio * Math.PI * 2 * 30;
+            const dist = 6 + Math.random() * 4;
+            p.x = Math.cos(angle) * dist;
+            p.z = Math.sin(angle) * dist;
+            p.y = (Math.random() - 0.5) * 0.5;
+            p.applyAxisAngle(new THREE.Vector3(1, 0, 1).normalize(), Math.PI / 6);
+          }
+          break;
+        }
+        case ShapeType.MEDITATING: {
+          if (i < COUNT * 0.15) { 
+             const theta = Math.random() * Math.PI * 2;
+             const phi = Math.acos(2 * Math.random() - 1);
+             const r = 2;
+             p.set(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta) + 5, r * Math.cos(phi));
+          } else if (i < COUNT * 0.6) {
+             const h = (Math.random()) * 6;
+             const r = 1.5 + (1 - h/6) * 2; 
+             const angle = Math.random() * Math.PI * 2;
+             p.set(r * Math.cos(angle), h - 2, r * Math.sin(angle));
+          } else {
+             const angle = Math.random() * Math.PI * 2;
+             const r = 4 + Math.random() * 3;
+             p.set(r * Math.cos(angle), -2 - Math.random(), r * Math.sin(angle));
+          }
+          break;
+        }
+        case ShapeType.FIREWORKS: {
+          p.set((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2).normalize().multiplyScalar(Math.random() * 2);
+          break;
+        }
+      }
+      return p;
+    };
+
+    const ParticleSystem = ({ shape, expansion, tension, color }) => {
+      const meshRef = useRef(null);
+      
+      const basePositions = useMemo(() => {
+        const positions = new Float32Array(COUNT * 3);
+        for (let i = 0; i < COUNT; i++) {
+          const v = getPosition(i, shape);
+          positions[i * 3] = v.x;
+          positions[i * 3 + 1] = v.y;
+          positions[i * 3 + 2] = v.z;
+        }
+        return positions;
+      }, [shape]);
+
+      const particles = useMemo(() => {
+        return new Array(COUNT).fill(0).map(() => ({
+          offset: Math.random() * 100
+        }));
+      }, []);
+
+      useFrame((state) => {
+        if (!meshRef.current) return;
+
+        const time = state.clock.getElapsedTime();
+        const expandFactor = 1 + expansion * 2.5;
+        const tensionFactor = tension * 2;
+
+        for (let i = 0; i < COUNT; i++) {
+          const ix = i * 3;
+          let x = basePositions[ix];
+          let y = basePositions[ix + 1];
+          let z = basePositions[ix + 2];
+
+          if (shape === ShapeType.FIREWORKS) {
+             const explosion = expansion * 15;
+             x = x * (1 + explosion) + Math.sin(time + i) * tensionFactor;
+             y = y * (1 + explosion) + Math.cos(time + i) * tensionFactor;
+             z = z * (1 + explosion);
+          } else {
+             x *= expandFactor;
+             y *= expandFactor;
+             z *= expandFactor;
+
+             const noise = Math.sin(time * 5 + particles[i].offset) * (tensionFactor * 0.5);
+             x += noise;
+             y += noise;
+             z += noise;
+             
+             const rotSpeed = 0.2 + tensionFactor;
+             const cosR = Math.cos(time * 0.1 * rotSpeed);
+             const sinR = Math.sin(time * 0.1 * rotSpeed);
+             
+             const nx = x * cosR - z * sinR;
+             const nz = x * sinR + z * cosR;
+             x = nx;
+             z = nz;
+          }
+
+          DUMMY.position.set(x, y, z);
+          
+          const s = (1 + Math.sin(time * 2 + particles[i].offset) * 0.3) * (0.5 + expansion * 0.5);
+          DUMMY.scale.set(s, s, s);
+          DUMMY.updateMatrix();
+          meshRef.current.setMatrixAt(i, DUMMY.matrix);
+        }
+        
+        meshRef.current.instanceMatrix.needsUpdate = true;
+      });
+
+      return (
+        <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]}>
+          <sphereGeometry args={[0.1, 8, 8]} />
+          <meshStandardMaterial 
+            color={color} 
+            emissive={color} 
+            emissiveIntensity={0.8 + tension * 2} 
+            roughness={0.4}
+            metalness={0.8}
+            toneMapped={false}
+          />
+        </instancedMesh>
+      );
+    };
+
+    // --- Controls UI ---
+    const SHAPES = Object.values(ShapeType);
+    const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899', '#ffffff'];
+
+    const Controls = ({ currentShape, setShape, color, setColor, aiState, isModelLoading }) => {
+      return (
+        <div className="absolute top-0 left-0 w-full h-full pointer-events-none p-6 flex flex-col justify-between z-10">
+          <div className="flex justify-between items-start pointer-events-auto">
+            <div>
+              <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-purple-500 tracking-tighter drop-shadow-lg">
+                KINETIC<span className="text-white">PARTICLES</span>
+              </h1>
+              <p className="text-xs text-gray-400 mt-1 max-w-xs">
+                Local AI Version. Open hand to expand. Shake to tense.
+              </p>
+              
+              <div className="mt-4 flex flex-col gap-2 bg-black/40 backdrop-blur-md p-4 rounded-xl border border-white/10 w-64">
+                 <div className="flex justify-between text-xs font-mono text-gray-300">
+                   <span>EXPANSION</span>
+                   <span className="text-cyan-400">{(aiState.expansion * 100).toFixed(0)}%</span>
+                 </div>
+                 <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-cyan-400 h-full transition-all duration-300 ease-out" style={{ width: `${aiState.expansion * 100}%` }} />
+                 </div>
+
+                 <div className="flex justify-between text-xs font-mono text-gray-300 mt-2">
+                   <span>TENSION (Speed)</span>
+                   <span className="text-pink-500">{(aiState.tension * 100).toFixed(0)}%</span>
+                 </div>
+                 <div className="w-full bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                    <div className="bg-pink-500 h-full transition-all duration-300 ease-out" style={{ width: `${aiState.tension * 100}%` }} />
+                 </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+                <div className="flex items-center gap-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+                  {isModelLoading ? (
+                    <>
+                       <div className="loader w-3 h-3 border-2"></div>
+                       <span className="text-xs font-medium text-white/80">LOADING AI...</span>
+                    </>
+                  ) : (
+                    <>
+                       <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                       <span className="text-xs font-medium text-white/80">LOCAL TRACKING ACTIVE</span>
+                    </>
+                  )}
+                </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col md:flex-row gap-6 items-end md:items-center pointer-events-auto bg-black/40 backdrop-blur-lg p-6 rounded-2xl border border-white/10 self-center md:self-auto mb-4 md:mb-0">
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-bold text-gray-400 tracking-wider">TEMPLATE</label>
+              <div className="flex flex-wrap gap-2">
+                {SHAPES.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setShape(s)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border ${
+                      currentShape === s
+                        ? 'bg-white/20 border-white/40 text-white shadow-[0_0_15px_rgba(255,255,255,0.3)]'
+                        : 'bg-transparent border-white/10 text-gray-400 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="w-px h-12 bg-white/10 hidden md:block mx-2" />
+
+            <div className="flex flex-col gap-2">
+              <label className="text-xs font-bold text-gray-400 tracking-wider">COLOR</label>
+              <div className="flex gap-2">
+                {COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setColor(c)}
+                    className={`w-8 h-8 rounded-full border-2 transition-transform duration-200 hover:scale-110 ${
+                      color === c ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-70 hover:opacity-100'
+                    }`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // --- Local Camera & AI Handler ---
+    const LocalVisionHandler = ({ onUpdate, onLoadChange }) => {
+      const videoRef = useRef(null);
+      const requestRef = useRef(null);
+      const handLandmarkerRef = useRef(null);
+      const lastVideoTimeRef = useRef(-1);
+      
+      // For Tension Calculation (Speed of movement)
+      const prevWristRef = useRef({ x: 0, y: 0 });
+
+      useEffect(() => {
+        const setupAI = async () => {
+          onLoadChange(true);
+          try {
+            const vision = await FilesetResolver.forVisionTasks(
+              "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+            );
+            
+            handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                delegate: "GPU"
+              },
+              runningMode: "VIDEO",
+              numHands: 2
+            });
+
+            startCamera();
+          } catch (error) {
+            console.error("Error setting up MediaPipe:", error);
+            alert("Failed to load local AI model.");
+          } finally {
+            onLoadChange(false);
+          }
+        };
+
+        const startCamera = async () => {
+             try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                if (videoRef.current) {
+                  videoRef.current.srcObject = stream;
+                  videoRef.current.addEventListener('loadeddata', predictWebcam);
+                }
+             } catch(err) {
+                 console.error("Camera Error", err);
+             }
+        };
+
+        setupAI();
+
+        return () => {
+             if (requestRef.current) cancelAnimationFrame(requestRef.current);
+             if (videoRef.current && videoRef.current.srcObject) {
+                 videoRef.current.srcObject.getTracks().forEach(t => t.stop());
+             }
+        };
+      }, []);
+
+      const predictWebcam = async () => {
+         const video = videoRef.current;
+         const landmarker = handLandmarkerRef.current;
+         
+         if (video && landmarker) {
+             let startTimeMs = performance.now();
+             
+             if (lastVideoTimeRef.current !== video.currentTime) {
+                 lastVideoTimeRef.current = video.currentTime;
+                 const result = landmarker.detectForVideo(video, startTimeMs);
+
+                 if (result.landmarks && result.landmarks.length > 0) {
+                     // 1. Calculate Expansion (Openness)
+                     // Using the first hand detected
+                     const hand = result.landmarks[0];
+                     const openness = calculateOpenness(hand);
+
+                     // 2. Calculate Tension (Speed/Jitter)
+                     const wrist = hand[0];
+                     const dx = wrist.x - prevWristRef.current.x;
+                     const dy = wrist.y - prevWristRef.current.y;
+                     const speed = Math.sqrt(dx*dx + dy*dy) * 100; // Multiplier to make it sensitive
+                     const tension = Math.min(Math.max(speed, 0), 1);
+                     
+                     prevWristRef.current = { x: wrist.x, y: wrist.y };
+
+                     onUpdate({ expansion: openness, tension: tension });
+                 } else {
+                     // No hands detected, slowly reset
+                     onUpdate(prev => ({ 
+                         expansion: Math.max(0, prev.expansion - 0.05),
+                         tension: Math.max(0, prev.tension - 0.05)
+                     }));
+                 }
+             }
+         }
+         requestRef.current = requestAnimationFrame(predictWebcam);
+      };
+
+      return (
+         <div className="hidden">
+             <video ref={videoRef} autoPlay playsInline muted />
+         </div>
+      );
+    };
+
+    // ----------------------------------------------------------------------
+    // 4. MAIN APP
+    // ----------------------------------------------------------------------
+
+    const lerp = (start, end, t) => start * (1 - t) + end * t;
+
+    const App = () => {
+      const [shape, setShape] = useState(ShapeType.HEART);
+      const [color, setColor] = useState('#ec4899');
+      const [isModelLoading, setIsModelLoading] = useState(true);
+      
+      const [targetState, setTargetState] = useState({ expansion: 0.5, tension: 0.0 });
+      const [displayState, setDisplayState] = useState({ expansion: 0.5, tension: 0.0 });
+
+      const handleUpdate = useCallback((update) => {
+        // We can pass a function or value, handle both for the No-Hands logic
+        if (typeof update === 'function') {
+            setTargetState(prev => update(prev));
+        } else {
+            setTargetState(update);
+        }
+      }, []);
+
+      useEffect(() => {
+        let animationFrameId;
+        const animate = () => {
+          setDisplayState((prev) => ({
+            expansion: lerp(prev.expansion, targetState.expansion, 0.1),
+            tension: lerp(prev.tension, targetState.tension, 0.1),
+          }));
+          animationFrameId = requestAnimationFrame(animate);
+        };
+        animate();
+        return () => cancelAnimationFrame(animationFrameId);
+      }, [targetState]);
+
+      return (
+        <div className="relative w-full h-screen bg-black">
+          <LocalVisionHandler onUpdate={handleUpdate} onLoadChange={setIsModelLoading} />
+
+          <Controls 
+            currentShape={shape} 
+            setShape={setShape} 
+            color={color} 
+            setColor={setColor}
+            aiState={displayState}
+            isModelLoading={isModelLoading}
+          />
+
+          <Canvas>
+            <PerspectiveCamera makeDefault position={[0, 0, 30]} fov={60} />
+            <ambientLight intensity={0.5} />
+            <pointLight position={[10, 10, 10]} intensity={1} />
+            <pointLight position={[-10, -10, -10]} intensity={0.5} color={color} />
+            
+            <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+            
+            <ParticleSystem 
+              shape={shape} 
+              color={color}
+              expansion={displayState.expansion}
+              tension={displayState.tension}
+            />
+            
+            <OrbitControls 
+              enablePan={false} 
+              enableZoom={true} 
+              autoRotate={true} 
+              autoRotateSpeed={0.5 + displayState.tension * 2} 
+            />
+          </Canvas>
+        </div>
+      );
+    };
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
